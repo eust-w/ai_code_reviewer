@@ -133,7 +133,12 @@ func (b *Bot) HandlePullRequestEvent(ctx context.Context, event *github.PullRequ
 		}
 		
 		// 添加 LGTM 状态
-		if !result.LGTM {
+		// 如果result为空，则视为LGTM通过
+		isEmptyResult := result.Summary == "" && result.ReviewComment == "" && 
+		               result.Suggestions == "" && result.Highlights == "" && 
+		               result.Risks == ""
+		
+		if !result.LGTM && !isEmptyResult {
 			if language == "english" {
 				commentBody += "**LGTM: ✖️ Changes Required**\n\n"
 			} else {
@@ -147,8 +152,8 @@ func (b *Bot) HandlePullRequestEvent(ctx context.Context, event *github.PullRequ
 			}
 		}
 		
-		// 添加总结
-		if result.Summary != "" {
+		// 添加总结（仅当内容非空时）
+		if result.Summary != "" && result.Summary != "没有提供代码变更总结" && result.Summary != "No code changes detected." {
 			if language == "english" {
 				commentBody += fmt.Sprintf("## Summary\n%s\n\n", result.Summary)
 			} else {
@@ -165,8 +170,8 @@ func (b *Bot) HandlePullRequestEvent(ctx context.Context, event *github.PullRequ
 			}
 		}
 		
-		// 添加建议
-		if result.Suggestions != "" {
+		// 添加建议（仅当内容非空且非默认值时）
+		if result.Suggestions != "" && result.Suggestions != "没有特定的改进建议" && result.Suggestions != "No specific suggestions" {
 			if language == "english" {
 				commentBody += fmt.Sprintf("## Improvement Suggestions\n%s\n\n", result.Suggestions)
 			} else {
@@ -174,8 +179,8 @@ func (b *Bot) HandlePullRequestEvent(ctx context.Context, event *github.PullRequ
 			}
 		}
 		
-		// 添加亮点
-		if result.Highlights != "" {
+		// 添加亮点（仅当内容非空且非默认值时）
+		if result.Highlights != "" && result.Highlights != "没有特别指出的代码亮点" && result.Highlights != "No highlights identified" {
 			if language == "english" {
 				commentBody += fmt.Sprintf("## Code Highlights\n%s\n\n", result.Highlights)
 			} else {
@@ -183,8 +188,8 @@ func (b *Bot) HandlePullRequestEvent(ctx context.Context, event *github.PullRequ
 			}
 		}
 		
-		// 添加风险
-		if result.Risks != "" {
+		// 添加风险（仅当内容非空且非默认值时）
+		if result.Risks != "" && result.Risks != "没有发现明显的风险" && result.Risks != "No risks identified" {
 			if language == "english" {
 				commentBody += fmt.Sprintf("## Potential Risks\n%s\n\n", result.Risks)
 			} else {
@@ -192,12 +197,12 @@ func (b *Bot) HandlePullRequestEvent(ctx context.Context, event *github.PullRequ
 			}
 		}
 		
-		// 即使评论内容为空，也添加到评论列表
-		if commentBody == "" {
+		// 如果评论内容只包含LGTM状态，则添加简短说明
+		if commentBody == "**LGTM: ✅ Code Looks Good**\n\n" || commentBody == "**LGTM: ✅ 代码看起来不错**\n\n" {
 			if language == "english" {
-				commentBody = "**No Detailed Comments**\n\nThe code reviewer returned empty comments. This might be because the code change is too small or the LLM didn't return results in the expected format."
+				commentBody += "The code changes look good with no specific issues identified."
 			} else {
-				commentBody = "**没有详细评论内容**\n\n代码审查器返回了空的评论内容。这可能是因为代码变更太小或者 LLM 没有按照预期的格式返回结果。"
+				commentBody += "代码变更看起来不错，没有发现特定问题。"
 			}
 		}
 		
