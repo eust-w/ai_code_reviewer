@@ -169,7 +169,7 @@ You MUST provide your feedback in a strict JSON format with the following struct
   "summary": string, // A concise summary of the code changes
   "suggestions": string, // Specific suggestions for improvements
   "highlights": string, // Positive aspects or well-implemented parts of the code
-  "risks": string // Potential risks or issues that might arise from these changes
+  "risks": string // IMPORTANT: Keep this to a SINGLE, SHORT sentence (max 100 chars) describing the most critical risk only
 }
 
 IMPORTANT REQUIREMENTS:
@@ -177,7 +177,7 @@ IMPORTANT REQUIREMENTS:
 2. Do NOT include any text before or after the JSON object.
 3. All fields MUST be present in your response.
 4. NEVER leave any field empty or null. If you have nothing to say for a field, provide a message like "No specific suggestions" or "No risks identified".
-5. Provide detailed and specific feedback for each field, with examples from the code where relevant.
+5. Provide detailed and specific feedback for each field, with examples from the code where relevant, EXCEPT for the 'risks' field which must be a single, short sentence.
 6. Make sure your JSON is properly formatted and can be parsed by a standard JSON parser.
 
 Failure to follow these instructions will result in your review being rejected.
