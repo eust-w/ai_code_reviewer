@@ -5,6 +5,10 @@ on:
     tags:
       - '*'
 
+# 添加权限配置
+permissions:
+  contents: write  # 这是创建release所必需的权限
+
 jobs:
   build:
     name: Build
@@ -30,32 +34,63 @@ jobs:
           # 创建输出目录
           mkdir -p dist
           
-          # 编译各个平台的二进制文件
+          # 编译服务器版本
+          echo "Building server version..."
           # Windows AMD64
-          GOOS=windows GOARCH=amd64 go build -ldflags="-X main.Version=${TAG}" -o dist/acr_windows_amd64.exe ./cmd/acr
-          
+          GOOS=windows GOARCH=amd64 go build -ldflags="-X main.Version=${TAG} -s -w" -o dist/cr-bot-server_windows_amd64.exe ./cmd/server
           # Linux AMD64
-          GOOS=linux GOARCH=amd64 go build -ldflags="-X main.Version=${TAG}" -o dist/acr_linux_amd64 ./cmd/acr
-          
+          GOOS=linux GOARCH=amd64 go build -ldflags="-X main.Version=${TAG} -s -w" -o dist/cr-bot-server_linux_amd64 ./cmd/server
           # Linux ARM64
-          GOOS=linux GOARCH=arm64 go build -ldflags="-X main.Version=${TAG}" -o dist/acr_linux_arm64 ./cmd/acr
-          
+          GOOS=linux GOARCH=arm64 go build -ldflags="-X main.Version=${TAG} -s -w" -o dist/cr-bot-server_linux_arm64 ./cmd/server
           # macOS AMD64
-          GOOS=darwin GOARCH=amd64 go build -ldflags="-X main.Version=${TAG}" -o dist/acr_darwin_amd64 ./cmd/acr
-          
+          GOOS=darwin GOARCH=amd64 go build -ldflags="-X main.Version=${TAG} -s -w" -o dist/cr-bot-server_darwin_amd64 ./cmd/server
           # macOS ARM64
-          GOOS=darwin GOARCH=arm64 go build -ldflags="-X main.Version=${TAG}" -o dist/acr_darwin_arm64 ./cmd/acr
+          GOOS=darwin GOARCH=arm64 go build -ldflags="-X main.Version=${TAG} -s -w" -o dist/cr-bot-server_darwin_arm64 ./cmd/server
+          
+          # 编译GitHub Action版本
+          echo "Building GitHub Action version..."
+          # Windows AMD64
+          GOOS=windows GOARCH=amd64 go build -ldflags="-X main.Version=${TAG} -s -w" -o dist/cr-bot-gh-action_windows_amd64.exe ./cmd/github-action
+          # Linux AMD64
+          GOOS=linux GOARCH=amd64 go build -ldflags="-X main.Version=${TAG} -s -w" -o dist/cr-bot-gh-action_linux_amd64 ./cmd/github-action
+          # Linux ARM64
+          GOOS=linux GOARCH=arm64 go build -ldflags="-X main.Version=${TAG} -s -w" -o dist/cr-bot-gh-action_linux_arm64 ./cmd/github-action
+          # macOS AMD64
+          GOOS=darwin GOARCH=amd64 go build -ldflags="-X main.Version=${TAG} -s -w" -o dist/cr-bot-gh-action_darwin_amd64 ./cmd/github-action
+          # macOS ARM64
+          GOOS=darwin GOARCH=arm64 go build -ldflags="-X main.Version=${TAG} -s -w" -o dist/cr-bot-gh-action_darwin_arm64 ./cmd/github-action
+          
+          # 编译Lambda版本
+          echo "Building Lambda version..."
+          # Linux AMD64 (Lambda通常只在Linux上运行)
+          GOOS=linux GOARCH=amd64 go build -ldflags="-X main.Version=${TAG} -s -w" -o dist/cr-bot-lambda_linux_amd64 ./cmd/lambda
+          # Linux ARM64 (支持ARM Lambda)
+          GOOS=linux GOARCH=arm64 go build -ldflags="-X main.Version=${TAG} -s -w" -o dist/cr-bot-lambda_linux_arm64 ./cmd/lambda
+
+      - name: Generate checksums
+        run: |
+          cd dist
+          sha256sum * > SHA256SUMS.txt
+          cd ..
 
       - name: Create Release
         id: create_release
         uses: softprops/action-gh-release@v1
         with:
           files: |
-            dist/acr_windows_amd64.exe
-            dist/acr_linux_amd64
-            dist/acr_linux_arm64
-            dist/acr_darwin_amd64
-            dist/acr_darwin_arm64
+            dist/cr-bot-server_windows_amd64.exe
+            dist/cr-bot-server_linux_amd64
+            dist/cr-bot-server_linux_arm64
+            dist/cr-bot-server_darwin_amd64
+            dist/cr-bot-server_darwin_arm64
+            dist/cr-bot-gh-action_windows_amd64.exe
+            dist/cr-bot-gh-action_linux_amd64
+            dist/cr-bot-gh-action_linux_arm64
+            dist/cr-bot-gh-action_darwin_amd64
+            dist/cr-bot-gh-action_darwin_arm64
+            dist/cr-bot-lambda_linux_amd64
+            dist/cr-bot-lambda_linux_arm64
+            dist/SHA256SUMS.txt
           draft: false
           prerelease: false
           generate_release_notes: true

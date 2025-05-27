@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
-
+	"fmt"
 	"github.com/google/go-github/v60/github"
 	"github.com/sirupsen/logrus"
 )
@@ -107,7 +107,7 @@ func (h *WebhookHandler) validatePayload(r *http.Request) ([]byte, error) {
 	}
 
 	if signature == "" {
-		return nil, github.ErrMissingHubSignature
+		return nil, fmt.Errorf("missing Hub signature")
 	}
 
 	if err := github.ValidateSignature(signature, payload, h.secret); err != nil {

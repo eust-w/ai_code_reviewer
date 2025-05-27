@@ -2,15 +2,12 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"os"
-	"strconv"
-	"strings"
 
 	"github.com/eust-w/ai_code_reviewer/internal/bot"
 	"github.com/eust-w/ai_code_reviewer/internal/chat"
 	"github.com/eust-w/ai_code_reviewer/internal/config"
-	"github.com/eust-w/ai_code_reviewer/internal/github"
+	"github.com/eust-w/ai_code_reviewer/internal/git/github"
 	gh "github.com/google/go-github/v60/github"
 	"github.com/sirupsen/logrus"
 )
