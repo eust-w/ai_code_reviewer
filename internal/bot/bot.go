@@ -179,7 +179,8 @@ func (b *Bot) HandlePullRequestEvent(ctx context.Context, event *github.PullRequ
 			}
 		}
 		
-		// 添加亮点（仅当内容非空且非默认值时）
+		// 添加亮点（暂时注释掉）
+		/*
 		if result.Highlights != "" && result.Highlights != "没有特别指出的代码亮点" && result.Highlights != "No highlights identified" {
 			if language == "english" {
 				commentBody += fmt.Sprintf("## Code Highlights\n%s\n\n", result.Highlights)
@@ -187,13 +188,14 @@ func (b *Bot) HandlePullRequestEvent(ctx context.Context, event *github.PullRequ
 				commentBody += fmt.Sprintf("## 代码亮点\n%s\n\n", result.Highlights)
 			}
 		}
+		*/
 		
-		// 添加风险（仅当内容非空且非默认值时）
+		// 添加风险（简化为一句话）
 		if result.Risks != "" && result.Risks != "没有发现明显的风险" && result.Risks != "No risks identified" {
 			if language == "english" {
-				commentBody += fmt.Sprintf("## Potential Risks\n%s\n\n", result.Risks)
+				commentBody += fmt.Sprintf("**Potential Risks**: %s\n\n", result.Risks)
 			} else {
-				commentBody += fmt.Sprintf("## 潜在风险\n%s\n\n", result.Risks)
+				commentBody += fmt.Sprintf("**潜在风险**: %s\n\n", result.Risks)
 			}
 		}
 		
