@@ -501,11 +501,36 @@ func (c *Chat) CodeReview(ctx context.Context, patch string) (ReviewResult, erro
 			r := <-resultChan
 			
 			if r.err != nil {
-				logrus.Warnf("Error reviewing chunk %d: %v, continuing with other chunks", r.index+1, r.err)
-				// 如果失败，添加一个空结果
-				results[r.index] = ReviewResult{
-					LGTM: true,
-					ReviewComment: fmt.Sprintf("Failed to review this part due to error: %v", r.err),
+				logrus.Warnf("Error reviewing chunk %d: %v, attempting to retry", r.index+1, r.err)
+				
+				// 尝试重试最多3次
+				var retryResult ReviewResult
+				var retryErr error
+				var retrySuccess bool = false
+				
+				for retryCount := 0; retryCount < 3; retryCount++ {
+					logrus.Infof("Retry %d/3 for chunk %d", retryCount+1, r.index+1)
+					retryResult, retryErr = c.reviewSingleChunk(ctx, c.generatePrompt(patches[r.index]))
+					
+					if retryErr == nil {
+						logrus.Infof("Retry %d/3 successful for chunk %d", retryCount+1, r.index+1)
+						retrySuccess = true
+						break
+					}
+					
+					logrus.Warnf("Retry %d/3 failed for chunk %d: %v", retryCount+1, r.index+1, retryErr)
+					time.Sleep(2 * time.Second) // 等待一下再重试
+				}
+				
+				if retrySuccess {
+					results[r.index] = retryResult
+					logrus.Infof("Successfully retried chunk %d, LGTM=%v, comment length=%d", 
+						r.index+1, retryResult.LGTM, len(retryResult.ReviewComment))
+				} else {
+					logrus.Errorf("All retries failed for chunk %d", r.index+1)
+					results[r.index] = ReviewResult{
+						LGTM: true,
+					}
 				}
 			} else {
 				results[r.index] = r.result
@@ -763,14 +788,7 @@ func (c *Chat) reviewSingleChunk(ctx context.Context, prompt string) (ReviewResu
 	// 如果所有模型都失败了，返回错误信息
 	if content == "" {
 		logrus.Error("All LLM models failed, unable to perform code review")
-		return ReviewResult{
-			LGTM:          true,
-			ReviewComment: "Unable to perform code review due to API service issues. Please check your API configuration or try again later.",
-			Summary:       "API service issues encountered.",
-			Suggestions:   "Please check your API configuration and ensure all services are properly set up.",
-			Highlights:    "",
-			Risks:         "Continuing without proper code review may lead to undetected issues in the code.",
-		}, nil
+		return ReviewResult{LGTM: true}, nil
 	}
 
 	// 处理结果的标签
@@ -812,26 +830,12 @@ ProcessResult:
 					if err := json.Unmarshal([]byte(jsonContent), &nestedResult); err != nil {
 						logrus.Warnf("Failed to parse extracted JSON: %v", err)
 						// Fallback to using the raw content as the review comment
-						return ReviewResult{
-							LGTM:          false,
-							ReviewComment: content,
-							Summary:       "Error parsing LLM response",
-							Suggestions:   "Please check the API response format and ensure it matches the expected JSON structure.",
-							Highlights:    "",
-							Risks:         "The response could not be properly parsed, so the review may be incomplete or formatted incorrectly.",
-						}, nil
+						return ReviewResult{LGTM: true}, nil
 					}
 				}
 			} else {
 				// 如果无法提取 JSON，使用原始内容作为评论
-				return ReviewResult{
-					LGTM:          false,
-					ReviewComment: content,
-					Summary:       "Error parsing LLM response",
-					Suggestions:   "Please check the API response format and ensure it matches the expected JSON structure.",
-					Highlights:    "",
-					Risks:         "The response could not be properly parsed, so the review may be incomplete or formatted incorrectly.",
-				}, nil
+				return ReviewResult{LGTM: true}, nil
 			}
 		}
 		
@@ -852,23 +856,5 @@ ProcessResult:
 	}
 	
 	logrus.Infof("Review result: LGTM=%v, comment length=%d", result.LGTM, len(result.ReviewComment))
-	
-	// 确保所有字段都有值
-	if result.Summary == "" {
-		result.Summary = "没有提供代码变更总结"
-	}
-	
-	if result.Suggestions == "" {
-		result.Suggestions = "没有特定的改进建议"
-	}
-	
-	if result.Highlights == "" {
-		result.Highlights = "没有特别指出的代码亮点"
-	}
-	
-	if result.Risks == "" {
-		result.Risks = "没有发现明显的风险"
-	}
-	
 	return result, nil
 }

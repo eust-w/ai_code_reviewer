@@ -83,31 +83,6 @@ func (b *Bot) HandleGiteaPullRequest(ctx context.Context, event *gitea.HookPullR
 
 // Common handler for pull requests from any platform
 func (b *Bot) handlePullRequest(ctx context.Context, owner, repo string, number int, baseSHA, headSHA, action string) error {
-	// 移除标签检查，让所有PR都能触发代码审查
-	// 注释掉原来的代码，保留以备将来可能需要恢复
-	/*
-	// Check if target label is required and present
-	if b.config.TargetLabel != "" {
-		labels, err := b.platform.GetPullRequestLabels(ctx, owner, repo, number)
-		if err != nil {
-			return fmt.Errorf("failed to get PR labels: %w", err)
-		}
-
-		hasTargetLabel := false
-		for _, label := range labels {
-			if label == b.config.TargetLabel {
-				hasTargetLabel = true
-				break
-			}
-		}
-
-		if !hasTargetLabel {
-			logrus.Info("Target label not attached, skipping")
-			return nil
-		}
-	}
-	*/
-
 	// Compare commits to get changed files
 	logrus.Debugf("Comparing commits: base=%s, head=%s", baseSHA, headSHA)
 	changedFiles, commits, err := b.platform.CompareCommits(ctx, owner, repo, baseSHA, headSHA)
@@ -157,35 +132,61 @@ func (b *Bot) handlePullRequest(ctx context.Context, owner, repo string, number 
 
 		// 构建完整的评论内容，包含所有字段
 		commentBody := ""
-		
+		language := strings.ToLower(b.config.Language)
 		// 添加总结
 		if result.Summary != "" {
-			commentBody += fmt.Sprintf("## 总结\n%s\n\n", result.Summary)
+			if language == "english" {
+				commentBody += fmt.Sprintf("## Summary\n%s\n\n", result.Summary)
+			} else {
+				commentBody += fmt.Sprintf("## 总结\n%s\n\n", result.Summary)
+			}
 		}
 		
 		// 添加详细评论
 		if result.ReviewComment != "" {
-			commentBody += fmt.Sprintf("## 详细评论\n%s\n\n", result.ReviewComment)
+			if language == "english" {
+				commentBody += fmt.Sprintf("## Review Comment\n%s\n\n", result.ReviewComment)
+			} else {
+				commentBody += fmt.Sprintf("## 详细评论\n%s\n\n", result.ReviewComment)
+			}
 		}
 		
 		// 添加建议
-		if result.Suggestions != "" {
-			commentBody += fmt.Sprintf("## 改进建议\n%s\n\n", result.Suggestions)
+		if result.Suggestions != "" || result.Risks != "" {
+			if language == "english" {
+				commentBody += fmt.Sprintf("## Suggestions\n%s\n\n", result.Suggestions)
+			} else {
+				commentBody += fmt.Sprintf("## 改进建议\n%s\n\n", result.Suggestions)
+			}
+		}else{
+			result.LGTM = true
 		}
 		
-		// 添加亮点
-		if result.Highlights != "" {
-			commentBody += fmt.Sprintf("## 代码亮点\n%s\n\n", result.Highlights)
-		}
+		// // 添加亮点
+		// if result.Highlights != "" {
+		// 	if language == "english" {
+		// 		commentBody += fmt.Sprintf("## Highlights\n%s\n\n", result.Highlights)
+		// 	} else {
+		// 		commentBody += fmt.Sprintf("## 代码亮点\n%s\n\n", result.Highlights)
+		// 	}
+		// }
 		
 		// 添加风险
 		if result.Risks != "" {
-			commentBody += fmt.Sprintf("## 潜在风险\n%s\n\n", result.Risks)
+			if language == "english" {
+				commentBody += fmt.Sprintf("## Risks\n%s\n\n", result.Risks)
+			} else {
+				commentBody += fmt.Sprintf("## 潜在风险\n%s\n\n", result.Risks)
+			}
 		}
 		
 		// 添加 LGTM 状态
 		if !result.LGTM {
-			commentBody = fmt.Sprintf("**LGTM: ✖️ 需要修改**\n\n%s", commentBody)
+			if language == "english" {
+				commentBody = fmt.Sprintf("**LGTM: ✖️ Changes Required**\n\n%s", commentBody)
+			} else {
+				commentBody = fmt.Sprintf("**LGTM: ✖️ 需要修改**\n\n%s", commentBody)
+			}
 		} else {
 			commentBody = fmt.Sprintf("**LGTM: ✅ 代码看起来不错**\n\n%s", commentBody)
 		}

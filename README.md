@@ -91,6 +91,15 @@ WEBHOOK_SECRET=your-secure-webhook-secret
 docker run -p 8008:8008 --env-file .env ai-code-reviewer:latest
 ```
 
+## 使用方式
+
+本项目支持两种主要的使用方式：
+
+1. **AWS Lambda 部署**：作为无服务器函数运行，通过API Gateway接收GitHub webhook请求
+2. **GitHub Action 部署**：作为GitHub Actions工作流的一部分直接在PR中运行
+
+详细的使用说明、配置参数和故障排除指南，请参考 [USAGE.md](./docs/USAGE.md)。
+
 ## 使用示例
 
 ### GitHub 工作流程

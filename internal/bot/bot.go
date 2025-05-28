@@ -132,11 +132,8 @@ func (b *Bot) HandlePullRequestEvent(ctx context.Context, event *github.PullRequ
 			language = "chinese"
 		}
 		
-		// 添加 LGTM 状态
-		// 如果result为空，则视为LGTM通过
-		isEmptyResult := result.Summary == "" && result.ReviewComment == "" && 
-		               result.Suggestions == "" && result.Highlights == "" && 
-		               result.Risks == ""
+		// 如果没有建议和风险，则视为LGTM通过
+		isEmptyResult := result.Suggestions == "" && result.Risks == ""
 		
 		if !result.LGTM && !isEmptyResult {
 			if language == "english" {
@@ -153,7 +150,7 @@ func (b *Bot) HandlePullRequestEvent(ctx context.Context, event *github.PullRequ
 		}
 		
 		// 添加总结（仅当内容非空时）
-		if result.Summary != "" && result.Summary != "没有提供代码变更总结" && result.Summary != "No code changes detected." {
+		if result.Summary != "" {
 			if language == "english" {
 				commentBody += fmt.Sprintf("## Summary\n%s\n\n", result.Summary)
 			} else {
@@ -169,19 +166,18 @@ func (b *Bot) HandlePullRequestEvent(ctx context.Context, event *github.PullRequ
 				commentBody += fmt.Sprintf("## 详细评论\n%s\n\n", result.ReviewComment)
 			}
 		}
-		
-		// 添加建议（仅当内容非空且非默认值时）
-		if result.Suggestions != "" && result.Suggestions != "没有特定的改进建议" && result.Suggestions != "No specific suggestions" {
+
+		if result.Suggestions != "" {
 			if language == "english" {
-				commentBody += fmt.Sprintf("## Improvement Suggestions\n%s\n\n", result.Suggestions)
+				commentBody += fmt.Sprintf("## Suggestions\n%s\n\n", result.Suggestions)
 			} else {
 				commentBody += fmt.Sprintf("## 改进建议\n%s\n\n", result.Suggestions)
 			}
-		}
+		}	
 		
 		// 添加亮点（暂时注释掉）
 		/*
-		if result.Highlights != "" && result.Highlights != "没有特别指出的代码亮点" && result.Highlights != "No highlights identified" {
+		if result.Highlights != "" {
 			if language == "english" {
 				commentBody += fmt.Sprintf("## Code Highlights\n%s\n\n", result.Highlights)
 			} else {
@@ -191,20 +187,11 @@ func (b *Bot) HandlePullRequestEvent(ctx context.Context, event *github.PullRequ
 		*/
 		
 		// 添加风险（简化为一句话）
-		if result.Risks != "" && result.Risks != "没有发现明显的风险" && result.Risks != "No risks identified" {
+		if result.Risks != "" {
 			if language == "english" {
 				commentBody += fmt.Sprintf("**Potential Risks**: %s\n\n", result.Risks)
 			} else {
 				commentBody += fmt.Sprintf("**潜在风险**: %s\n\n", result.Risks)
-			}
-		}
-		
-		// 如果评论内容只包含LGTM状态，则添加简短说明
-		if commentBody == "**LGTM: ✅ Code Looks Good**\n\n" || commentBody == "**LGTM: ✅ 代码看起来不错**\n\n" {
-			if language == "english" {
-				commentBody += "The code changes look good with no specific issues identified."
-			} else {
-				commentBody += "代码变更看起来不错，没有发现特定问题。"
 			}
 		}
 		
