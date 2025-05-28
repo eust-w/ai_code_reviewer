@@ -27,6 +27,9 @@ type Config struct {
 
 	// Common Git platform settings
 	TargetLabel string
+	
+	// Code indexing related
+	EnableIndexing bool
 
 	// OpenAI related
 	OpenAIAPIKey       string
@@ -66,6 +69,15 @@ type Config struct {
 	// Deepseek model related
 	DeepseekModelName   string
 	IsDeepseekEnabled   bool
+	
+	// Code indexing related
+	IndexerStorageType  string
+	ChromaHost          string
+	ChromaPort          int
+	ChromaPath          string
+	ChromaSSL           bool
+	LocalStoragePath    string
+	IndexerVectorType   string
 }
 
 // LoadConfig loads configuration from environment variables
@@ -131,7 +143,17 @@ func LoadConfig() *Config {
 	
 	// Load Deepseek model configuration
 	config.DeepseekModelName = os.Getenv("DEEPSEEK_MODEL_NAME")
-	config.IsDeepseekEnabled = config.LLMProxyEndpoint != "" && config.LLMProxyAPIKey != "" && config.DeepseekModelName != ""
+	config.IsDeepseekEnabled = os.Getenv("DEEPSEEK_ENABLED") == "true"
+	
+	// Load code indexing configuration
+	config.EnableIndexing = os.Getenv("ENABLE_INDEXING") == "true"
+	config.IndexerStorageType = getEnvWithDefault("INDEXER_STORAGE_TYPE", "local")
+	config.ChromaHost = getEnvWithDefault("INDEXER_CHROMA_HOST", "localhost")
+	config.ChromaPort = getEnvIntWithDefault("INDEXER_CHROMA_PORT", 8000)
+	config.ChromaPath = os.Getenv("INDEXER_CHROMA_PATH")
+	config.ChromaSSL = os.Getenv("INDEXER_CHROMA_SSL") == "true"
+	config.LocalStoragePath = getEnvWithDefault("INDEXER_LOCAL_STORAGE_PATH", "./data/index")
+	config.IndexerVectorType = getEnvWithDefault("INDEXER_VECTOR_TYPE", "simple")
 
 	return config
 }
@@ -169,6 +191,11 @@ func parseInt(value string, defaultValue int) int {
 		return defaultValue
 	}
 	return i
+}
+
+func getEnvIntWithDefault(key string, defaultValue int) int {
+	value := os.Getenv(key)
+	return parseInt(value, defaultValue)
 }
 
 func splitAndTrim(value, separator string) []string {

@@ -272,6 +272,100 @@ GitHub Action支持以下输入参数：
 | 日志级别 | `LOG_LEVEL` | 不适用（使用Actions日志） |
 | Webhook密钥 | `WEBHOOK_SECRET` | 不适用（由GitHub管理） |
 
+### 代码索引相关参数
+
+代码索引功能可以显著提高代码审查的质量，通过分析代码库上下文来增强审查结果。
+
+| 功能 | Lambda环境变量 | GitHub Action输入 |
+|-----|--------------|------------------|
+| 启用代码索引 | `ENABLE_INDEXING` | `enable_indexing` |
+| 索引存储类型 | `INDEXER_STORAGE_TYPE` | `indexer_storage_type` |
+| Chroma主机 | `INDEXER_CHROMA_HOST` | `indexer_chroma_host` |
+| Chroma端口 | `INDEXER_CHROMA_PORT` | `indexer_chroma_port` |
+| Chroma路径 | `INDEXER_CHROMA_PATH` | `indexer_chroma_path` |
+| Chroma SSL | `INDEXER_CHROMA_SSL` | `indexer_chroma_ssl` |
+| 本地存储路径 | `INDEXER_LOCAL_STORAGE_PATH` | `indexer_local_storage_path` |
+| 向量服务类型 | `INDEXER_VECTOR_TYPE` | `indexer_vector_type` |
+
+### 代码索引配置示例
+
+#### 使用Chroma存储索引数据
+
+[Chroma](https://www.trychroma.com/) 是一个开源的向量数据库，非常适合存储和检索代码片段的向量表示。下面是使用Chroma进行代码索引的配置示例：
+
+```env
+# 启用代码索引
+# 设置为true来启用代码索引功能
+# 这将显著提高代码审查的质量，但会增加资源消耗
+# 默认值：false
+ENABLE_INDEXING=true
+
+# 索引存储类型
+# 可选值："chroma", "local"
+# chroma: 使用Chroma向量数据库存储索引
+# local: 使用本地文件系统存储索引
+# 默认值：local
+INDEXER_STORAGE_TYPE=chroma
+
+# Chroma服务器配置
+# 当INDEXER_STORAGE_TYPE=chroma时使用
+INDEXER_CHROMA_HOST=localhost
+INDEXER_CHROMA_PORT=8000
+INDEXER_CHROMA_PATH=/api/v1
+INDEXER_CHROMA_SSL=false
+
+# 向量服务类型
+# 可选值："openai", "local", "simple"
+# openai: 使用OpenAI API生成向量表示
+# local: 使用本地模型生成向量表示
+# simple: 使用简单的基于规则的向量生成（不需要外部API）
+# 默认值：simple
+INDEXER_VECTOR_TYPE=openai
+
+# 如果使用OpenAI生成向量，需要提供API密钥
+# 当INDEXER_VECTOR_TYPE=openai时使用
+OPENAI_API_KEY=sk-your-openai-api-key
+```
+
+#### 使用本地存储索引数据
+
+如果您不想使用Chroma，可以选择使用本地文件系统存储索引数据：
+
+```env
+ENABLE_INDEXING=true
+INDEXER_STORAGE_TYPE=local
+INDEXER_LOCAL_STORAGE_PATH=./data/index
+INDEXER_VECTOR_TYPE=simple
+```
+
+### 在GitHub Action中使用代码索引
+
+要在GitHub Action中启用代码索引，可以添加以下配置：
+
+```yaml
+- name: AI Code Review with Indexing
+  uses: eust-w/ai_code_reviewer@main
+  with:
+    github_token: ${{ secrets.GITHUB_TOKEN }}
+    openai_api_key: ${{ secrets.OPENAI_API_KEY }}
+    language: english
+    enable_indexing: true
+    indexer_storage_type: local
+    indexer_local_storage_path: ./data/index
+    indexer_vector_type: simple
+```
+
+### 代码索引工作原理
+
+启用代码索引后，系统将执行以下操作：
+
+1. **索引代码库**：在首次运行时，系统会分析并索引整个代码库
+2. **提取上下文**：在审查PR时，系统会查询与变更文件相关的代码上下文
+3. **增强补丁**：将相关的代码上下文添加到补丁中，增强审查的质量
+4. **生成更准确的审查结果**：利用上下文信息，LLM可以生成更准确、更相关的审查结果
+
+代码索引功能特别适用于大型代码库和复杂的PR，可以显著提高审查质量。
+
 ## 总结
 
 - **Lambda部署**适合需要独立于GitHub之外运行的场景，或者需要自定义处理逻辑的场景。
