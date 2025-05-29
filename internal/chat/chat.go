@@ -648,33 +648,25 @@ func mergeReviewResults(results []ReviewResult) ReviewResult {
 	highlights := []string{}
 	risks := []string{}
 	
-	for i, result := range results {
+	for _, result := range results {
 		if !result.LGTM {
 			lgtm = false
 		}
 		
-		// 添加分块标记
-		if len(results) > 1 {
-			comments = append(comments, fmt.Sprintf("### 代码块 %d/%d 审查结果:\n\n%s", i+1, len(results), result.ReviewComment))
-			
-			// 收集其他字段
-			if result.Summary != "" {
-				summaries = append(summaries, fmt.Sprintf("**块 %d/%d**: %s", i+1, len(results), result.Summary))
-			}
-			if result.Suggestions != "" {
-				suggestions = append(suggestions, fmt.Sprintf("**块 %d/%d**: %s", i+1, len(results), result.Suggestions))
-			}
-			if result.Highlights != "" {
-				highlights = append(highlights, fmt.Sprintf("**块 %d/%d**: %s", i+1, len(results), result.Highlights))
-			}
-			if result.Risks != "" {
-				risks = append(risks, fmt.Sprintf("**块 %d/%d**: %s", i+1, len(results), result.Risks))
-			}
-		} else {
-			comments = append(comments, result.ReviewComment)
+		// 直接添加审查评论，不包含任何代码块相关标记
+		comments = append(comments, result.ReviewComment)
+		
+		// 收集其他字段，不包含代码块标记
+		if result.Summary != "" {
 			summaries = append(summaries, result.Summary)
+		}
+		if result.Suggestions != "" {
 			suggestions = append(suggestions, result.Suggestions)
+		}
+		if result.Highlights != "" {
 			highlights = append(highlights, result.Highlights)
+		}
+		if result.Risks != "" {
 			risks = append(risks, result.Risks)
 		}
 	}

@@ -3,11 +3,13 @@ package bot
 import (
 	"context"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/eust-w/ai_code_reviewer/internal/git"
+	"github.com/eust-w/ai_code_reviewer/internal/indexer"
 	"github.com/eust-w/ai_code_reviewer/internal/git/gitea"
 	"github.com/google/go-github/v60/github"
 	"github.com/sirupsen/logrus"
@@ -61,6 +63,14 @@ func (b *Bot) HandleGitLabMergeRequest(ctx context.Context, event *gitlab.MergeE
 
 // HandleGiteaPullRequest handles Gitea pull request events
 func (b *Bot) HandleGiteaPullRequest(ctx context.Context, event *gitea.HookPullRequestEvent) error {
+	logrus.Infof("[DEBUG] 开始处理 Gitea 拉取请求事件")
+	
+	// 记录事件详情
+	logrus.Infof("[DEBUG] Gitea 事件详情: action=%s, repo=%s/%s", 
+		event.Action, 
+		event.Repository.Owner.Username, 
+		event.Repository.Name)
+	
 	// Skip if not opened or synchronized
 	action := event.Action
 	if action != gitea.HookIssueOpened && action != gitea.HookIssueSynchronized {
@@ -108,6 +118,67 @@ func (b *Bot) handlePullRequest(ctx context.Context, owner, repo string, number 
 		logrus.Info("No files to review after filtering")
 		return nil
 	}
+	
+	// 如果启用了索引功能，确保仓库已被索引
+	logrus.Infof("[DEBUG] 检查索引器状态: indexer=%v", b.indexer)
+	if b.indexer != nil {
+		logrus.Infof("[DEBUG] 开始检查仓库 %s/%s 是否已索引", owner, repo)
+		
+		// 获取仓库索引器
+		logrus.Infof("[DEBUG] 尝试获取仓库索引器")
+		idxr, err := b.indexer.GetIndexer(owner, repo)
+		if err != nil {
+			logrus.Warnf("[DEBUG] 获取索引器失败: %v - 将继续而不使用代码上下文", err)
+		} else {
+			logrus.Infof("[DEBUG] 成功获取索引器: %v", idxr)
+			// 获取仓库路径和平台类型
+			platformType := b.config.Platform
+			var repoURL string
+			
+			// 根据不同平台构建仓库URL
+			switch platformType {
+			case "github":
+				repoURL = fmt.Sprintf("https://github.com/%s/%s.git", owner, repo)
+			case "gitlab":
+				repoURL = fmt.Sprintf("https://gitlab.com/%s/%s.git", owner, repo)
+			case "gitea":
+				// 从配置中获取Gitea基础URL
+				baseURL := b.config.GiteaBaseURL
+				// 移除尾部斜杠
+				baseURL = strings.TrimSuffix(baseURL, "/")
+				repoURL = fmt.Sprintf("%s/%s/%s.git", baseURL, owner, repo)
+			default:
+				// 默认使用简单的路径格式
+				repoURL = fmt.Sprintf("%s/%s", owner, repo)
+			}
+			
+			// 使用仓库URL作为路径，索引器将使用这个来获取代码
+			repoPath := repoURL
+			
+			// 尝试索引仓库（使用head commit作为分支/引用）
+			logrus.Infof("[DEBUG] 准备索引仓库 %s/%s 的提交 %s", owner, repo, headSHA)
+			
+			// 设置环境变量以传递平台和凭证信息
+			logrus.Infof("[DEBUG] 设置环境变量: PLATFORM=%s, GITEA_BASE_URL=%s", platformType, b.config.GiteaBaseURL)
+			os.Setenv("PLATFORM", platformType)
+			os.Setenv("GITHUB_TOKEN", b.config.GithubToken)
+			os.Setenv("GITLAB_TOKEN", b.config.GitlabToken)
+			os.Setenv("GITEA_TOKEN", b.config.GiteaToken)
+			os.Setenv("GITEA_BASE_URL", b.config.GiteaBaseURL)
+			
+			logrus.Infof("[DEBUG] 开始调用 IndexRepository 方法: repoPath=%s, headSHA=%s", repoPath, headSHA)
+			
+			// 添加更多调试信息
+			logrus.Infof("[DEBUG] 索引器详情: %#v", idxr)
+			
+			indexErr := idxr.IndexRepository(ctx, repoPath, headSHA)
+			if indexErr != nil {
+				logrus.Warnf("[DEBUG] 索引仓库失败: %v - 将继续使用部分或无上下文", indexErr)
+			} else {
+				logrus.Infof("[DEBUG] 成功索引仓库 %s/%s", owner, repo)
+			}
+		}
+	}
 
 	// Review each file
 	start := time.Now()
@@ -124,7 +195,46 @@ func (b *Bot) handlePullRequest(ctx context.Context, owner, repo string, number 
 			continue
 		}
 
-		result, err := b.chat.CodeReview(ctx, patch)
+		// 使用代码索引增强补丁信息（如果启用）
+		enhancedPatch := patch
+		// 先检查索引器是否为空
+		if b.indexer == nil {
+			logrus.Debugf("Code indexing is not enabled, continuing without context enhancement")
+		} else {
+			logrus.Infof("Using code indexing to enhance review context for %s", file.Filename)
+
+			// 获取仓库信息
+			repoInfo := indexer.RepoInfo{
+				Owner:    owner,
+				Name:     repo,
+				Language: indexer.GetFileLanguage(file.Filename),
+				Branch:   "main", // 默认分支，可能需要从PR中获取
+			}
+
+			// 查询相关代码上下文
+			idxr, err := b.indexer.GetIndexer(owner, repo)
+			if err != nil {
+				logrus.Warnf("Failed to get indexer for %s/%s: %v - continuing without code context", owner, repo, err)
+			} else {
+				logrus.Debugf("Successfully obtained indexer for %s/%s", owner, repo)
+				// 查询上下文
+				codeContextMap, err := idxr.QueryContext(ctx, []*git.CommitFile{file}, repoInfo)
+				if err != nil {
+					logrus.Warnf("Failed to query code context for %s: %v - continuing without context enhancement", file.Filename, err)
+				} else if codeContext, ok := codeContextMap[file.Filename]; ok && codeContext != nil {
+					// 使用上下文丰富补丁 - 调用包级函数
+					logrus.Debugf("Found code context for %s with %d imports, %d definitions, %d similar snippets",
+						file.Filename, len(codeContext.Imports), len(codeContext.Definitions), len(codeContext.SimilarCode))
+					enhancedPatch = indexer.EnrichPatchWithContext(patch, codeContext)
+					logrus.Infof("Enhanced patch for %s with code context", file.Filename)
+				} else {
+					logrus.Debugf("No relevant code context found for %s", file.Filename)
+				}
+			}
+		}
+
+		// 使用增强的补丁进行代码审查
+		result, err := b.chat.CodeReview(ctx, enhancedPatch)
 		if err != nil {
 			logrus.Errorf("Failed to review %s: %v", file.Filename, err)
 			continue

@@ -1,0 +1,9 @@
+	// 设置请求头
+	req.Header.Set("Content-Type", "application/json")
+	
+	// 从环境变量中获取API密钥
+	apiKey := os.Getenv("INDEXER_LLM_PROXY_API_KEY")
+	if apiKey == "" {
+		apiKey = s.apiKey
+	}
+	req.Header.Set("Authorization", "Bearer "+apiKey)

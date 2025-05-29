@@ -56,6 +56,18 @@ func main() {
 
 	// Create bot
 	reviewBot := bot.NewBot(cfg, platform, chatClient)
+	
+	// 如果索引器存在，确保在程序退出时关闭资源
+	if indexManager := reviewBot.GetIndexManager(); indexManager != nil {
+		defer func() {
+			logrus.Info("Closing indexer resources...")
+			if err := indexManager.Close(); err != nil {
+				logrus.Warnf("Error closing indexer resources: %v", err)
+			} else {
+				logrus.Info("Indexer resources closed successfully")
+			}
+		}()
+	}
 
 	// Create webhook handler based on platform
 	webhookSecret := os.Getenv("WEBHOOK_SECRET")
@@ -81,6 +93,13 @@ func main() {
 			
 			// Handle the event in a goroutine to avoid blocking the webhook handler
 			go func() {
+				// 添加错误恢复机制
+				defer func() {
+					if r := recover(); r != nil {
+						logrus.Errorf("Recovered from panic in GitHub request handler: %v", r)
+					}
+				}()
+				
 				ctx := context.Background()
 				if err := reviewBot.HandleGitHubPullRequest(ctx, event); err != nil {
 					logrus.Errorf("Error handling GitHub pull request event: %v", err)
@@ -101,6 +120,13 @@ func main() {
 			
 			// Handle the event in a goroutine to avoid blocking the webhook handler
 			go func() {
+				// 添加错误恢复机制
+				defer func() {
+					if r := recover(); r != nil {
+						logrus.Errorf("Recovered from panic in GitLab request handler: %v", r)
+					}
+				}()
+				
 				ctx := context.Background()
 				if err := reviewBot.HandleGitLabMergeRequest(ctx, event); err != nil {
 					logrus.Errorf("Error handling GitLab merge request event: %v", err)
@@ -121,6 +147,13 @@ func main() {
 			
 			// Handle the event in a goroutine to avoid blocking the webhook handler
 			go func() {
+				// 添加错误恢复机制
+				defer func() {
+					if r := recover(); r != nil {
+						logrus.Errorf("Recovered from panic in Gitea request handler: %v", r)
+					}
+				}()
+				
 				ctx := context.Background()
 				if err := reviewBot.HandleGiteaPullRequest(ctx, event); err != nil {
 					logrus.Errorf("Error handling Gitea pull request event: %v", err)
@@ -163,6 +196,8 @@ func main() {
 	logrus.Info("Shutting down server...")
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
+	
+	// 注意：索引器资源关闭已经通过defer设置，将在程序退出时自动执行
 	
 	if err := server.Shutdown(ctx); err != nil {
 		logrus.Fatalf("Error shutting down server: %v", err)
