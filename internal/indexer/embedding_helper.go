@@ -2,8 +2,10 @@ package indexer
 
 import (
 	"fmt"
+	"math"
 	"os"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/sirupsen/logrus"
 )
@@ -79,4 +81,79 @@ func FormatEmbeddingModel(model, provider string) string {
 		return fmt.Sprintf("%s/%s", provider, model)
 	}
 	return model
+}
+
+// SplitTextIntoChunks 将文本分割成多个块，以适应模型的上下文窗口大小
+// maxTokens: 模型的最大上下文窗口大小（以token为单位）
+// overlap: 相邻块之间的重叠token数，以保持上下文连贯性
+func SplitTextIntoChunks(text string, maxTokens int, overlap int) []string {
+	if maxTokens <= 0 {
+		maxTokens = 8000 // 默认使用8000作为安全值
+	}
+	
+	if overlap < 0 {
+		overlap = 0
+	}
+	
+	// 如果overlap大于maxTokens的一半，则将其限制为maxTokens的一半
+	if overlap > maxTokens/2 {
+		overlap = maxTokens/2
+	}
+	
+	// 估算文本的token数量
+	// 这是一个简单的估算，实际token数量取决于模型的分词器
+	// 一般来说，对于英文文本，1个token约等于4个字符
+	// 对于中文文本，1个token约等于1-2个字符
+	// 这里我们使用一个保守的估计：平均每个UTF-8字符约等于1个token
+	runeCount := utf8.RuneCountInString(text)
+	
+	// 如果文本的token数量小于maxTokens，则直接返回整个文本
+	if runeCount <= maxTokens {
+		return []string{text}
+	}
+	
+	// 计算每个块的大小（以字符为单位）
+	chunkSize := maxTokens - overlap
+	
+	// 计算需要多少个块
+	numChunks := int(math.Ceil(float64(runeCount) / float64(chunkSize)))
+	
+	// 将文本分割成多个块
+	chunks := make([]string, 0, numChunks)
+	runes := []rune(text)
+	
+	for i := 0; i < numChunks; i++ {
+		start := i * chunkSize
+		if i > 0 {
+			// 对于除第一个块外的所有块，从前一个块的末尾减去overlap开始
+			start = i*chunkSize - overlap
+		}
+		
+		end := start + maxTokens
+		if end > len(runes) {
+			end = len(runes)
+		}
+		
+		chunk := string(runes[start:end])
+		chunks = append(chunks, chunk)
+		
+		// 如果已经处理到文本末尾，则退出循环
+		if end == len(runes) {
+			break
+		}
+	}
+	
+	logrus.Infof("Split text into %d chunks (original size: %d characters, max tokens: %d, overlap: %d)",
+		len(chunks), runeCount, maxTokens, overlap)
+	
+	return chunks
+}
+
+// EstimateTokenCount 估算文本的token数量
+// 这是一个简单的估算，实际token数量取决于模型的分词器
+func EstimateTokenCount(text string) int {
+	// 对于英文文本，1个token约等于4个字符
+	// 对于中文文本，1个token约等于1-2个字符
+	// 这里我们使用一个保守的估计：平均每个UTF-8字符约等于1个token
+	return utf8.RuneCountInString(text)
 }

@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/sirupsen/logrus"
 )
 
@@ -161,39 +162,137 @@ func (s *ChromaStorage) getOrCreateCollection(ctx context.Context, repoKey strin
 
 // SaveCodeSnippet 保存代码片段
 func (s *ChromaStorage) SaveCodeSnippet(ctx context.Context, repoKey, filename, content string, metadata map[string]interface{}) (string, error) {
-	// 生成唯一ID
-	id := fmt.Sprintf("%s_%s_%d", repoKey, strings.ReplaceAll(filename, "/", "_"), time.Now().UnixNano())
+	// 获取或创建集合
+	collID, err := s.getOrCreateCollection(ctx, repoKey)
+	if err != nil {
+		return "", fmt.Errorf("failed to get or create collection: %w", err)
+	}
 
-	// 确保元数据包含必要字段
+	// 生成唯一ID
+	id := uuid.New().String()
+
+	// 添加文件名到元数据
 	if metadata == nil {
 		metadata = make(map[string]interface{})
 	}
-	metadata["repo_key"] = repoKey
 	metadata["filename"] = filename
+	// 添加仓库标识到元数据
+	metadata["repo_key"] = repoKey
+	// 添加索引时间戳
 	metadata["indexed_at"] = time.Now().Unix()
 
 	// 从文件名推断语言
 	language := detectLanguageFromFilename(filename)
 	metadata["language"] = language
 
-	// 检查 client 是否为 nil
-	if s.client == nil {
-		logrus.Errorf("Chroma client is not initialized")
-		return "", fmt.Errorf("chroma client is not initialized")
+	// 估算内容的token数量
+	estimatedTokens := EstimateTokenCount(content)
+	
+	// 检查内容是否超过模型的上下文窗口大小
+	// 对于大多数嵌入模型，上下文窗口大小为8192 tokens
+	const maxTokens = 8000 // 使用8000作为安全值，略小于8192
+	const chunkOverlap = 200 // 块之间的重叠token数
+	
+	// 如果内容超过上下文窗口大小，则需要分块处理
+	if estimatedTokens > maxTokens {
+		logrus.Infof("Content for %s exceeds token limit (%d > %d), splitting into chunks", 
+			filename, estimatedTokens, maxTokens)
+		
+		// 分割内容为多个块
+		chunks := SplitTextIntoChunks(content, maxTokens, chunkOverlap)
+		logrus.Infof("Split %s into %d chunks", filename, len(chunks))
+		
+		// 为每个块创建一个ID
+		chunkIDs := make([]string, len(chunks))
+		for i := range chunks {
+			chunkIDs[i] = fmt.Sprintf("%s_chunk_%d", id, i+1)
+		}
+		
+		// 为每个块创建元数据，添加块信息
+		chunkMetadatas := make([]map[string]interface{}, len(chunks))
+		for i := range chunks {
+			// 复制原始元数据
+			chunkMetadata := make(map[string]interface{})
+			for k, v := range metadata {
+				chunkMetadata[k] = v
+			}
+			
+			// 添加块信息
+			chunkMetadata["parent_id"] = id
+			chunkMetadata["chunk_index"] = i + 1
+			chunkMetadata["total_chunks"] = len(chunks)
+			chunkMetadata["is_chunk"] = true
+			
+			chunkMetadatas[i] = chunkMetadata
+		}
+		
+		// 检查 vectorSvc 是否为 nil
+		if s.vectorSvc == nil {
+			logrus.Warnf("Vector service is not initialized for %s, proceeding without embedding", filename)
+			
+			// 没有向量服务，直接添加所有块，没有嵌入
+			for i, chunk := range chunks {
+				if addErr := s.client.AddDocuments(ctx, collID, []string{chunkIDs[i]}, []string{chunk}, []map[string]interface{}{chunkMetadatas[i]}, nil); addErr != nil {
+					logrus.Errorf("Failed to add chunk %d/%d for %s: %v", i+1, len(chunks), filename, addErr)
+					// 继续处理其他块，不要因为一个块失败就中断整个过程
+				}
+			}
+		} else {
+			// 为每个块生成嵌入向量并添加到Chroma
+			for i, chunk := range chunks {
+				embedding, embErr := s.vectorSvc.EmbedCode(ctx, language, chunk)
+				
+				if embErr != nil {
+					logrus.Warnf("Failed to generate embedding for chunk %d/%d of %s: %v, proceeding without embedding", 
+						i+1, len(chunks), filename, embErr)
+					
+					// 如果嵌入失败，仍然尝试添加文档，但没有嵌入
+					if addErr := s.client.AddDocuments(ctx, collID, []string{chunkIDs[i]}, []string{chunk}, []map[string]interface{}{chunkMetadatas[i]}, nil); addErr != nil {
+						logrus.Errorf("Failed to add chunk %d/%d for %s: %v", i+1, len(chunks), filename, addErr)
+						// 继续处理其他块
+					}
+				} else {
+					// 使用生成的嵌入向量添加文档
+					if addErr := s.client.AddDocuments(ctx, collID, []string{chunkIDs[i]}, []string{chunk}, []map[string]interface{}{chunkMetadatas[i]}, [][]float32{embedding}); addErr != nil {
+						logrus.Errorf("Failed to add chunk %d/%d with embedding for %s: %v", i+1, len(chunks), filename, addErr)
+						// 继续处理其他块
+					}
+				}
+			}
+		}
+		
+		// 添加一个父记录，包含完整内容的元数据，但不包含实际内容
+		// 这样可以在查询时找到所有相关的块
+		parentMetadata := make(map[string]interface{})
+		for k, v := range metadata {
+			parentMetadata[k] = v
+		}
+		parentMetadata["is_parent"] = true
+		parentMetadata["total_chunks"] = len(chunks)
+		
+		// 添加父记录，内容字段设为空字符串或摘要
+		contentSummary := ""
+		if len(content) > 200 {
+			contentSummary = content[:200] + "..."
+		} else {
+			contentSummary = content
+		}
+		
+		if addErr := s.client.AddDocuments(ctx, collID, []string{id}, []string{contentSummary}, []map[string]interface{}{parentMetadata}, nil); addErr != nil {
+			logrus.Warnf("Failed to add parent record for %s: %v", filename, addErr)
+			// 不返回错误，因为块已经添加成功
+		}
+		
+		return id, nil
 	}
-
-	// 获取或创建集合
-	collID, err := s.getOrCreateCollection(ctx, repoKey)
-	if err != nil {
-		return "", err
-	}
-
+	
+	// 对于小文件，使用原来的处理方式
 	// 检查 vectorSvc 是否为 nil
 	if s.vectorSvc == nil {
 		logrus.Warnf("Vector service is not initialized for %s, proceeding without embedding", filename)
 		// 没有向量服务，直接添加文档，没有嵌入
-		if err := s.client.AddDocuments(ctx, collID, []string{id}, []string{content}, []map[string]interface{}{metadata}, nil); err != nil {
-			return "", fmt.Errorf("failed to add document to Chroma: %w", err)
+		if addErr := s.client.AddDocuments(ctx, collID, []string{id}, []string{content}, []map[string]interface{}{metadata}, nil); addErr != nil {
+			return "", fmt.Errorf("failed to add document to Chroma: %w", addErr)
 		}
 	} else {
 		// 生成代码嵌入向量
@@ -201,19 +300,15 @@ func (s *ChromaStorage) SaveCodeSnippet(ctx context.Context, repoKey, filename, 
 		if embErr != nil {
 			logrus.Warnf("Failed to generate embedding for %s: %v, proceeding without embedding", filename, embErr)
 			// 如果嵌入失败，仍然尝试添加文档，但没有嵌入
-			if err := s.client.AddDocuments(ctx, collID, []string{id}, []string{content}, []map[string]interface{}{metadata}, nil); err != nil {
-				return "", fmt.Errorf("failed to add document to Chroma: %w", err)
+			if addErr := s.client.AddDocuments(ctx, collID, []string{id}, []string{content}, []map[string]interface{}{metadata}, nil); addErr != nil {
+				return "", fmt.Errorf("failed to add document to Chroma: %w", addErr)
 			}
 		} else {
 			// 使用生成的嵌入向量添加文档
-			if err := s.client.AddDocuments(ctx, collID, []string{id}, []string{content}, []map[string]interface{}{metadata}, [][]float32{embedding}); err != nil {
-				return "", fmt.Errorf("failed to add document with embedding to Chroma: %w", err)
+			if addErr := s.client.AddDocuments(ctx, collID, []string{id}, []string{content}, []map[string]interface{}{metadata}, [][]float32{embedding}); addErr != nil {
+				return "", fmt.Errorf("failed to add document with embedding to Chroma: %w", addErr)
 			}
 		}
-	}
-
-	if err != nil {
-		return "", fmt.Errorf("failed to add document to Chroma: %w", err)
 	}
 
 	return id, nil
