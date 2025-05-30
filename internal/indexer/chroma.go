@@ -226,39 +226,89 @@ func (s *ChromaStorage) SaveCodeSnippet(ctx context.Context, repoKey, filename, 
 			chunkMetadatas[i] = chunkMetadata
 		}
 		
+		// 获取并发处理设置
+		concurrency := GetChromaConcurrency(5) // 默认并发数5
+		
+		// 创建错误通道和等待组
+		errChan := make(chan error, len(chunks))
+		var wg sync.WaitGroup
+		
+		// 创建一个令牌桶来控制并发数
+		tokenBucket := make(chan struct{}, concurrency)
+		
 		// 检查 vectorSvc 是否为 nil
 		if s.vectorSvc == nil {
 			logrus.Warnf("Vector service is not initialized for %s, proceeding without embedding", filename)
 			
-			// 没有向量服务，直接添加所有块，没有嵌入
+			// 没有向量服务，并发添加所有块，没有嵌入
 			for i, chunk := range chunks {
-				if addErr := s.client.AddDocuments(ctx, collID, []string{chunkIDs[i]}, []string{chunk}, []map[string]interface{}{chunkMetadatas[i]}, nil); addErr != nil {
-					logrus.Errorf("Failed to add chunk %d/%d for %s: %v", i+1, len(chunks), filename, addErr)
-					// 继续处理其他块，不要因为一个块失败就中断整个过程
-				}
+				wg.Add(1)
+				
+				// 创建闭包来捕获当前的i和chunk
+				func(index int, chunkContent string) {
+					// 获取令牌，限制并发
+					tokenBucket <- struct{}{}
+					defer func() {
+						<-tokenBucket // 释放令牌
+						wg.Done()
+					}()
+					
+					logrus.Debugf("Processing chunk %d/%d for %s without embedding", index+1, len(chunks), filename)
+					if addErr := s.client.AddDocuments(ctx, collID, []string{chunkIDs[index]}, []string{chunkContent}, []map[string]interface{}{chunkMetadatas[index]}, nil); addErr != nil {
+						logrus.Errorf("Failed to add chunk %d/%d for %s: %v", index+1, len(chunks), filename, addErr)
+						errChan <- addErr
+					}
+				}(i, chunk)
 			}
 		} else {
-			// 为每个块生成嵌入向量并添加到Chroma
+			// 并发为每个块生成嵌入向量并添加到Chroma
 			for i, chunk := range chunks {
-				embedding, embErr := s.vectorSvc.EmbedCode(ctx, language, chunk)
+				wg.Add(1)
 				
-				if embErr != nil {
-					logrus.Warnf("Failed to generate embedding for chunk %d/%d of %s: %v, proceeding without embedding", 
-						i+1, len(chunks), filename, embErr)
+				// 创建闭包来捕获当前的i和chunk
+				func(index int, chunkContent string) {
+					// 获取令牌，限制并发
+					tokenBucket <- struct{}{}
+					defer func() {
+						<-tokenBucket // 释放令牌
+						wg.Done()
+					}()
 					
-					// 如果嵌入失败，仍然尝试添加文档，但没有嵌入
-					if addErr := s.client.AddDocuments(ctx, collID, []string{chunkIDs[i]}, []string{chunk}, []map[string]interface{}{chunkMetadatas[i]}, nil); addErr != nil {
-						logrus.Errorf("Failed to add chunk %d/%d for %s: %v", i+1, len(chunks), filename, addErr)
-						// 继续处理其他块
+					logrus.Debugf("Processing chunk %d/%d for %s with embedding", index+1, len(chunks), filename)
+					embedding, embErr := s.vectorSvc.EmbedCode(ctx, language, chunkContent)
+					
+					if embErr != nil {
+						logrus.Warnf("Failed to generate embedding for chunk %d/%d of %s: %v, proceeding without embedding", 
+							index+1, len(chunks), filename, embErr)
+						
+						// 如果嵌入失败，仍然尝试添加文档，但没有嵌入
+						if addErr := s.client.AddDocuments(ctx, collID, []string{chunkIDs[index]}, []string{chunkContent}, []map[string]interface{}{chunkMetadatas[index]}, nil); addErr != nil {
+							logrus.Errorf("Failed to add chunk %d/%d for %s: %v", index+1, len(chunks), filename, addErr)
+							errChan <- addErr
+						}
+					} else {
+						// 使用生成的嵌入向量添加文档
+						if addErr := s.client.AddDocuments(ctx, collID, []string{chunkIDs[index]}, []string{chunkContent}, []map[string]interface{}{chunkMetadatas[index]}, [][]float32{embedding}); addErr != nil {
+							logrus.Errorf("Failed to add chunk %d/%d with embedding for %s: %v", index+1, len(chunks), filename, addErr)
+							errChan <- addErr
+						}
 					}
-				} else {
-					// 使用生成的嵌入向量添加文档
-					if addErr := s.client.AddDocuments(ctx, collID, []string{chunkIDs[i]}, []string{chunk}, []map[string]interface{}{chunkMetadatas[i]}, [][]float32{embedding}); addErr != nil {
-						logrus.Errorf("Failed to add chunk %d/%d with embedding for %s: %v", i+1, len(chunks), filename, addErr)
-						// 继续处理其他块
-					}
-				}
+				}(i, chunk)
 			}
+		}
+		
+		// 等待所有goroutine完成
+		wg.Wait()
+		close(errChan)
+		
+		// 检查是否有错误
+		errCount := 0
+		for range errChan {
+			errCount++
+		}
+		
+		if errCount > 0 {
+			logrus.Warnf("%d/%d chunks failed to process for %s", errCount, len(chunks), filename)
 		}
 		
 		// 添加一个父记录，包含完整内容的元数据，但不包含实际内容

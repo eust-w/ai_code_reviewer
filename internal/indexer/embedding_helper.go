@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math"
 	"os"
+	"strconv"
 	"strings"
 	"unicode/utf8"
 
@@ -156,4 +157,23 @@ func EstimateTokenCount(text string) int {
 	// 对于中文文本，1个token约等于1-2个字符
 	// 这里我们使用一个保守的估计：平均每个UTF-8字符约等于1个token
 	return utf8.RuneCountInString(text)
+}
+
+// GetChromaConcurrency 从环境变量获取Chroma的并发处理数量
+// 如果环境变量未设置，则返回默认值
+func GetChromaConcurrency(defaultConcurrency int) int {
+	concurrencyStr := os.Getenv("INDEXER_CHROMA_CONCURRENCY")
+	if concurrencyStr == "" {
+		logrus.Infof("Using default Chroma concurrency: %d", defaultConcurrency)
+		return defaultConcurrency
+	}
+	
+	concurrency, err := strconv.Atoi(concurrencyStr)
+	if err != nil || concurrency < 1 {
+		logrus.Warnf("Invalid Chroma concurrency value: %s, using default: %d", concurrencyStr, defaultConcurrency)
+		return defaultConcurrency
+	}
+	
+	logrus.Infof("Using Chroma concurrency from environment: %d", concurrency)
+	return concurrency
 }
